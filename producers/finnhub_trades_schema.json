@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["data", "type"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["trade"]
+    },
+    "data": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["p", "s", "t", "v"],
+        "properties": {
+            "p": {
+                "type": "number",
+                "description": "Price"
+            },
+            "s": {
+                "type": "string",
+                "pattern": "^[A-Z]+:[A-Z]+$",
+                "description": "Symbol"
+            },
+            "t": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Timestamp"
+            },
+            "v": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Volume"
+            },
+            "c": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "type": "null"
+                    }
+                ],
+                "description": "Conditions"
+            }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
