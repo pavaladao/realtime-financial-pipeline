@@ -1,7 +1,15 @@
 from confluent_kafka import Consumer, KafkaError
-import json
-from jsonschema import validate, ValidationError
+from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry.avro import AvroDeserializer
 
+# Schema Registry configuration
+schema_registry_conf = {'url': 'http://localhost:8081'}
+schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+
+# Avro deserializer
+avro_deserializer = AvroDeserializer(schema_registry_client)
+
+# Kafka configuration
 consumer_config = {
     'bootstrap.servers': 'localhost:9092',
     'group.id': 'financial_data',
@@ -10,17 +18,10 @@ consumer_config = {
 }
 
 consumer = Consumer(consumer_config)
-
-subscribe_topics = ["financial_data"]
-
-consumer.subscribe(subscribe_topics)
-
-print(f"Subscribed to topics: {subscribe_topics}")
+topics = ["financial_data"]
+consumer.subscribe(topics)
 
 batch = []
-
-with open('./finnhub_trades_schema.json') as schema_file:
-    validation_schema = json.load(schema_file)
 
 if __name__ == "__main__":
     try:
@@ -38,24 +39,23 @@ if __name__ == "__main__":
                     break
             
             try:
-                data = json.loads(msg.value().decode('utf-8'))
-                validate(instance=data, schema=validation_schema)
+                data = avro_deserializer(msg.value(), None)
+                
+                if data is None:
+                    print("Received message but failed deserialization")
+                    continue
 
-            except ValidationError as ve:
-
-                print(f"Validation error: {ve.message}")
+            except Exception as e:
+                print(f"Deserialization/validation error: {e}")
                 continue
 
+            # Manual commit
             consumer.commit()
 
-            print(f'Received message: {data}')
-            
+            print(f"Received message: {data}")
             batch.append(data)
 
     except KeyboardInterrupt:
         print("Shutting down consumer...")
-    except Exception as e:
-        print(f"Exception occurred: {e}")
     finally:
         consumer.close()
-

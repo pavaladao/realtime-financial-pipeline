@@ -1,0 +1,49 @@
+{
+  "type": "record",
+  "name": "FinancialData",
+  "namespace": "com.financial",
+  "fields": [
+    {
+      "name": "type",
+      "type": "string"
+    },
+    {
+      "name": "data",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "TradeData",
+          "fields": [
+            {
+              "name": "p",
+              "type": "double",
+              "doc": "Price"
+            },
+            {
+              "name": "s",
+              "type": "string",
+              "doc": "Symbol"
+            },
+            {
+              "name": "t",
+              "type": "long",
+              "doc": "Timestamp"
+            },
+            {
+              "name": "v",
+              "type": "double",
+              "doc": "Volume"
+            },
+            {
+              "name": "c",
+              "type": ["null", {"type": "array", "items": "string"}],
+              "default": null,
+              "doc": "Conditions"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

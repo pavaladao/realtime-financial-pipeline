@@ -1,18 +1,34 @@
 import websocket
-import os
-from dotenv import load_dotenv
 import json
 from confluent_kafka import Producer
-
-load_dotenv()
-AUTH_TOKEN = os.getenv("FINNHUB_TOKEN")
+from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry.avro import AvroSerializer
+from confluent_kafka.serialization import SerializationContext, MessageField
+from src.config.paths import FINNHUB_TRADES_AVRO_SCHEMA
+from src.config.env import FINNHUB_TOKEN
 
 MAX_MESSAGES = 10
 message_count = 0
 
+# Schema Registry setup
+schema_registry_conf = {'url': 'http://localhost:8081'}
+schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+
+# Load Avro schema
+with open(FINNHUB_TRADES_AVRO_SCHEMA) as schema_file:
+    avro_schema_str = schema_file.read()
+    
+avro_serializer = AvroSerializer(
+    schema_registry_client,
+    avro_schema_str,
+    lambda obj, ctx: obj
+)
+
+# Kafka Producer setup
 producer_config = {'bootstrap.servers': 'localhost:9092'}
 producer = Producer(producer_config)
 
+# WebSocket and topic setup
 tickers = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN', 'BINANCE:BTCUSDT']
 topic_name = "financial_data"
 
@@ -26,10 +42,18 @@ def on_message(ws, message):
     global message_count
     message_count += 1
 
+    msg_data = json.loads(message)
+
+    serialized_value = avro_serializer(
+        msg_data,
+        SerializationContext(topic_name, MessageField.VALUE)
+    )
+
     producer.produce(
         topic=topic_name,
-        value=message.encode('utf-8'),
-        callback=delivery_report
+        value=serialized_value,
+        callback=delivery_report,
+        
     )
     producer.poll(0)
 
@@ -50,7 +74,7 @@ def on_open(ws):
 if __name__ == "__main__":
     websocket.enableTrace(True)
     ws = websocket.WebSocketApp(
-        f"wss://ws.finnhub.io?token={AUTH_TOKEN}",
+        f"wss://ws.finnhub.io?token={FINNHUB_TOKEN}",
         on_message=on_message,
         on_error=on_error,
         on_close=on_close
