@@ -4,7 +4,6 @@ from confluent_kafka import Producer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import SerializationContext, MessageField
-from src.config.paths import FINNHUB_TRADES_AVRO_SCHEMA
 from src.config.env import FINNHUB_TOKEN
 
 MAX_MESSAGES = 10
@@ -14,23 +13,25 @@ message_count = 0
 schema_registry_conf = {'url': 'http://localhost:8081'}
 schema_registry_client = SchemaRegistryClient(schema_registry_conf)
 
-# Load Avro schema
-with open(FINNHUB_TRADES_AVRO_SCHEMA) as schema_file:
-    avro_schema_str = schema_file.read()
-    
-avro_serializer = AvroSerializer(
-    schema_registry_client,
-    avro_schema_str,
-    lambda obj, ctx: obj
-)
-
 # Kafka Producer setup
 producer_config = {'bootstrap.servers': 'localhost:9092'}
 producer = Producer(producer_config)
 
 # WebSocket and topic setup
 tickers = ['AAPL', 'GOOGL', 'MSFT', 'TSLA', 'AMZN', 'BINANCE:BTCUSDT']
-topic_name = "financial_data"
+topic_name = "trades-data"
+
+# Retrieve the latest schema from Schema Registry
+latest_schema = schema_registry_client.get_latest_version(f"{topic_name}-value")
+avro_schema_str = latest_schema.schema.schema_str
+
+# Avro Serializer setup
+avro_serializer = AvroSerializer(
+    schema_registry_client,
+    avro_schema_str,
+    lambda obj, ctx: obj,
+    conf={'auto.register.schemas': False}
+)
 
 def delivery_report(err, msg):
     if err is not None:
