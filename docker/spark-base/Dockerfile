@@ -13,6 +13,14 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+# ===== Install Python dependencies =====
+RUN python3 -m pip install --no-cache-dir --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+        fastavro \
+        requests \
+        avro \
+        python-dateutil
+
 # ===== Normalize python path =====
 RUN ln -sf /usr/bin/python3 /usr/bin/python
 

@@ -50,11 +50,6 @@ def avro_type_to_spark(avro_type):
 
     raise ValueError(f"Tipo Avro não suportado: {avro_type}")
 
-def deserialize_avro(avro_bytes):
-    """Desserializa bytes Avro em dict"""
-    bio = io.BytesIO(avro_bytes[5:])  # Jump the 5-byte Confluent header
-    return next(fastavro.reader(bio))
-
 def avro_schema_to_spark_schema(avro_schema_json):
     schema = json.loads(avro_schema_json)
     return StructType([
@@ -66,9 +61,9 @@ def avro_schema_to_spark_schema(avro_schema_json):
         for f in schema["fields"]
     ])
 
-# ===== Use requests to get schema =====
+# ===== Configuration =====
 
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:19092")
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092")
 TOPIC_NAME = os.getenv("TOPIC_NAME", "trades-data")
 SCHEMA_REGISTRY_URL = os.getenv("SCHEMA_REGISTRY_URL", "http://schema-registry:8081")
 
@@ -76,7 +71,7 @@ def get_schema_from_registry(topic_name, schema_registry_url):
     """
     Get the latest schema for a topic from the Schema Registry using HTTP API.
      - topic_name: name of the Kafka topic (e.g. "trades-data")
-        - schema_registry_url: URL of the Schema Registry (e.g. "http://schema-registry:8081")
+     - schema_registry_url: URL of the Schema Registry (e.g. "http://schema-registry:8081")
     """
     url = f"{schema_registry_url}/subjects/{topic_name}-value/versions/latest"
     
@@ -91,13 +86,17 @@ def get_schema_from_registry(topic_name, schema_registry_url):
     except requests.RequestException as e:
         raise RuntimeError(f"Erro ao buscar schema do Registry: {e}")
 
-# Get the schema
+# Get the schema string
 avro_schema_str = get_schema_from_registry(TOPIC_NAME, SCHEMA_REGISTRY_URL)
 print(f"Schema obtido: {avro_schema_str}")
+
+# Parse schema to Python dict (needed for fastavro)
+avro_schema_dict = json.loads(avro_schema_str)
 
 # Converts to StructType Spark
 spark_schema = avro_schema_to_spark_schema(avro_schema_str)
 
+# Create Spark Session
 spark = SparkSession.builder \
     .appName("FinancialTradesStreaming") \
     .master("spark://spark-master:7077") \
@@ -105,8 +104,15 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("WARN")
 
+# Create deserializer UDF with schema embedded
+def deserialize_avro(avro_bytes):
+    """Desserializa bytes Avro usando schemaless_reader"""
+    bio = io.BytesIO(avro_bytes[5:])  # Jump the 5-byte Confluent header
+    return fastavro.schemaless_reader(bio, avro_schema_dict)
+
 avro_udf = udf(deserialize_avro, spark_schema)
 
+# Read from Kafka
 df = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP) \
@@ -114,11 +120,14 @@ df = spark.readStream \
     .option("startingOffsets", "latest") \
     .load()
 
+# Parse Avro and flatten
 df_parsed = df.select(avro_udf(col("value")).alias("data")).select("data.*")
 
+# Write to console
 query = df_parsed.writeStream \
     .outputMode("append") \
     .format("console") \
+    .option("truncate", "false") \
     .start()
 
 query.awaitTermination()
