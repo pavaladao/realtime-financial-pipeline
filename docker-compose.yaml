@@ -1,0 +1,91 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.8.6
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "19092:19092"
+      - "9093:9093"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_LISTENERS: "PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      CLUSTER_ID: "MkQkYWIzNTI5NTJkNDQyYmQ1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - financial-pipeline
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.8.6
+    container_name: schema-registry
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "kafka:29092"
+      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: "_schemas"
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - financial-pipeline
+
+  spark-master:
+    image: spark-base:3.5.3
+    container_name: spark-master
+    command:
+      - "bin/spark-class"
+      - "org.apache.spark.deploy.master.Master"
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    networks:
+      - financial-pipeline
+
+  spark-worker:
+    image: spark-base:3.5.3
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    command:
+      - "bin/spark-class"
+      - "org.apache.spark.deploy.worker.Worker"
+      - "spark://spark-master:7077"
+    networks:
+      - financial-pipeline
+
+  spark-driver:
+    image: spark-driver:3.5.3
+    build:
+      context: .
+      dockerfile: docker/spark-driver/Dockerfile
+    container_name: spark-driver
+    depends_on:
+      - spark-master
+      - kafka
+      - schema-registry
+    volumes:
+      - ./src:/app/src
+    command:
+      - "sleep"
+      - "infinity"
+    networks:
+      - financial-pipeline
+
+networks:
+  financial-pipeline:
+    driver: bridge
+
+volumes:
+  kafka-data:
