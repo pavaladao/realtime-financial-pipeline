@@ -6,7 +6,7 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import SerializationContext, MessageField
 from src.config.env import FINNHUB_TOKEN
 
-MAX_MESSAGES = 10
+MAX_MESSAGES = -1
 message_count = 0
 
 # Schema Registry setup
@@ -58,7 +58,7 @@ def on_message(ws, message):
     )
     producer.poll(0)
 
-    if message_count >= MAX_MESSAGES:
+    if message_count >= MAX_MESSAGES and MAX_MESSAGES > 0:
         ws.close()
 
 def on_error(ws, error):

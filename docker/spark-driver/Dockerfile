@@ -8,10 +8,10 @@ COPY requirements/spark-driver.txt /tmp/requirements.txt
 RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Verificar se foram instaladas corretamente
-RUN echo "=== Verificando dependências Python ===" && \
+RUN echo "=== Verifying Python dependencies ===" && \
     python3 -m pip list && \
     echo "" && \
-    echo "=== Testando importações ===" && \
+    echo "=== Testing imports ===" && \
     python3 -c "import fastavro; print('✓ fastavro ok')" && \
     python3 -c "import requests; print('✓ requests ok')" && \
     python3 -c "import avro; print('✓ avro ok')" && \

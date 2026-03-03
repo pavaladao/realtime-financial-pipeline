@@ -4,10 +4,9 @@ import io
 import fastavro
 import requests
 import logging
-import time
 from typing import Optional, Dict, Any
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import to_timestamp, udf, col, explode, current_timestamp, window, sum, avg, min, max, count
+from pyspark.sql.functions import udf, col
 from pyspark.sql.types import (
     StructType, StructField,
     StringType, IntegerType, LongType,
@@ -15,9 +14,8 @@ from pyspark.sql.types import (
     ArrayType
 )
 
-#region KafkaReader
-
 logger = logging.getLogger(__name__)
+
 
 class KafkaReader:
     """
@@ -84,7 +82,7 @@ class KafkaReader:
         self.spark_schema = self._avro_schema_to_spark_schema(self.avro_schema_str)
 
         # Create UDF
-        self._avro_udf = self._build_avro_udf()
+        self._avro_udf = udf(self._deserialize_avro, self.spark_schema)
 
         # DataFrame will be created lazily
         self._df_stream = None
@@ -190,22 +188,6 @@ class KafkaReader:
             logger.error(f"Error deserializing Avro: {e}")
             raise
 
-    def _build_avro_udf(self):
-        """Cria a UDF sem capturar self."""
-        avro_schema_dict = self.avro_schema_dict  # pure schema dict
-        spark_schema = self.spark_schema
-
-        def deserialize_avro(avro_bytes: bytes):
-            import io
-            import fastavro
-            try:
-                bio = io.BytesIO(avro_bytes[5:])  # Remove Confluent header
-                return fastavro.schemaless_reader(bio, avro_schema_dict)
-            except Exception as e:
-                return None
-
-        return udf(deserialize_avro, spark_schema)
-
     def get_stream(self) -> DataFrame:
         """
         Returns the parsed streaming DataFrame ready for processing.
@@ -305,64 +287,48 @@ class KafkaReader:
         """Context manager exit."""
         self.stop()
 
-#endregion
+# ============================================================
+# Usage example
+# ============================================================
 
-reader = KafkaReader(
-    kafka_bootstrap="kafka:29092",
-    topic="trades-data",
-    schema_registry_url="http://schema-registry:8081"
-)
+if __name__ == "__main__":
+    import logging
 
-# ========== CONFIGURAÇÃO DA TORNEIRA ==========
-reader.spark.sparkContext.setLogLevel("ERROR")
-
-df = reader.get_stream()
-
-df_filtered = df.filter(df['type'] == 'trade')
-
-# explode: transforma cada elemento do array em uma linha separada
-# antes:  1 linha com array de 27 trades
-# depois: 27 linhas, cada uma com 1 trade
-df_exploded = df_filtered.select(
-    explode(col("data")).alias("trade")
-)
-
-df_trades = df_exploded.select(
-    col("trade.s").alias("symbol"),
-    col("trade.p").alias("price"),
-    col("trade.v").alias("volume"),
-    to_timestamp((col("trade.t") / 1000)).alias("event_time")
-)
-
-# Aggregations per minute per symbol
-df_agg = df_trades \
-    .withWatermark("event_time", "10 seconds") \
-    .groupBy(
-        window("event_time", "1 minute"),
-        col("symbol")
-    ) \
-    .agg(
-        sum("volume").alias("volume_total"),
-        avg("price").alias("preco_medio"),
-        min("price").alias("preco_min"),
-        max("price").alias("preco_max"),
-        count("*").alias("num_trades")
-    ) \
-    .select(
-        col("window.start").alias("janela_inicio"),
-        col("window.end").alias("janela_fim"),
-        "symbol",
-        "volume_total",
-        "preco_medio",
-        "preco_min",
-        "preco_max",
-        "num_trades"
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-query = df_agg.writeStream \
-    .format("console") \
-    .outputMode("update") \
-    .option("truncate", "false") \
-    .start()
+    # Create reader
+    reader = KafkaReader(
+        kafka_bootstrap=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"),
+        topic=os.getenv("TOPIC_NAME", "trades-data"),
+        schema_registry_url=os.getenv(
+            "SCHEMA_REGISTRY_URL",
+            "http://schema-registry:8081"
+        )
+    )
 
-query.awaitTermination()
+    # Option 1: Simple (console)
+    df = reader.get_stream()
+    query = reader.start_streaming(
+        output_format="console",
+        truncate="false"
+    )
+    query.awaitTermination()
+
+    # Option 2: With processing
+    # df = reader.get_stream()
+    # df_filtered = df.filter(df['price'] > 100)
+    # query = df_filtered.writeStream.format("console").start()
+    # query.awaitTermination()
+
+    # Option 3: With foreach (custom processing)
+    # def process_batch(batch_df, batch_id):
+    #     print(f"\n=== Batch {batch_id} ===")
+    #     batch_df.show()
+    #
+    # df = reader.get_stream()
+    # query = df.writeStream.foreachBatch(process_batch).start()
+    # query.awaitTermination()
