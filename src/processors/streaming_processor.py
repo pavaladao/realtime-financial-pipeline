@@ -7,7 +7,6 @@ import logging
 import time
 from typing import Optional, Dict, Any
 from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import to_timestamp, udf, col, explode, current_timestamp, window, sum, avg, min, max, count
 from pyspark.sql.types import (
     StructType, StructField,
     StringType, IntegerType, LongType,
@@ -191,7 +190,7 @@ class KafkaReader:
             raise
 
     def _build_avro_udf(self):
-        """Cria a UDF sem capturar self."""
+        """Creates the UDF without capturing self."""
         avro_schema_dict = self.avro_schema_dict  # pure schema dict
         spark_schema = self.spark_schema
 
@@ -307,62 +306,106 @@ class KafkaReader:
 
 #endregion
 
-reader = KafkaReader(
-    kafka_bootstrap="kafka:29092",
-    topic="trades-data",
-    schema_registry_url="http://schema-registry:8081"
+from pyspark.sql.functions import (
+    to_timestamp, udf, col, explode, window,
+    sum, avg, min, max, count, stddev
 )
 
-# ========== CONFIGURAÇÃO DA TORNEIRA ==========
-reader.spark.sparkContext.setLogLevel("ERROR")
+if __name__ == "__main__":
 
-df = reader.get_stream()
-
-df_filtered = df.filter(df['type'] == 'trade')
-
-# explode: transforma cada elemento do array em uma linha separada
-# antes:  1 linha com array de 27 trades
-# depois: 27 linhas, cada uma com 1 trade
-df_exploded = df_filtered.select(
-    explode(col("data")).alias("trade")
-)
-
-df_trades = df_exploded.select(
-    col("trade.s").alias("symbol"),
-    col("trade.p").alias("price"),
-    col("trade.v").alias("volume"),
-    to_timestamp((col("trade.t") / 1000)).alias("event_time")
-)
-
-# Aggregations per minute per symbol
-df_agg = df_trades \
-    .withWatermark("event_time", "10 seconds") \
-    .groupBy(
-        window("event_time", "1 minute"),
-        col("symbol")
-    ) \
-    .agg(
-        sum("volume").alias("volume_total"),
-        avg("price").alias("preco_medio"),
-        min("price").alias("preco_min"),
-        max("price").alias("preco_max"),
-        count("*").alias("num_trades")
-    ) \
-    .select(
-        col("window.start").alias("janela_inicio"),
-        col("window.end").alias("janela_fim"),
-        "symbol",
-        "volume_total",
-        "preco_medio",
-        "preco_min",
-        "preco_max",
-        "num_trades"
+    reader = KafkaReader(
+        kafka_bootstrap="kafka:29092",
+        topic="trades-data",
+        schema_registry_url="http://schema-registry:8081"
     )
 
-query = df_agg.writeStream \
-    .format("console") \
-    .outputMode("update") \
-    .option("truncate", "false") \
-    .start()
+    reader.spark.sparkContext.setLogLevel("ERROR")
 
-query.awaitTermination()
+    df = reader.get_stream()
+
+    df_trades = df \
+        .filter(col("type") == "trade") \
+        .select(explode(col("data")).alias("trade")) \
+        .select(
+            col("trade.s").alias("symbol"),
+            col("trade.p").alias("price"),
+            col("trade.v").alias("volume"),
+            to_timestamp((col("trade.t") / 1000)).alias("event_time")
+        )
+
+    # ── 1-minute tumbling window ────────────────────────────────
+    df_1min = df_trades \
+        .withWatermark("event_time", "10 seconds") \
+        .groupBy(window("event_time", "1 minute"), col("symbol")) \
+        .agg(
+            sum("volume").alias("total_volume"),
+            avg("price").alias("avg_price"),
+            min("price").alias("min_price"),
+            max("price").alias("max_price"),
+            count("*").alias("trade_count"),
+            stddev("price").alias("volatility"),
+            sum(col("price") * col("volume")).alias("_pv_sum")
+        ) \
+        .select(
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "symbol", "total_volume", "avg_price",
+            "min_price", "max_price", "trade_count", "volatility",
+            (col("_pv_sum") / col("total_volume")).alias("vwap")
+        )
+
+    # ── 5-minute sliding window (1-min slide) ───────────────────
+    df_5min = df_trades \
+        .withWatermark("event_time", "30 seconds") \
+        .groupBy(window("event_time", "5 minutes", "1 minute"), col("symbol")) \
+        .agg(
+            sum("volume").alias("total_volume"),
+            avg("price").alias("avg_price"),
+            stddev("price").alias("volatility"),
+            sum(col("price") * col("volume")).alias("_pv_sum")
+        ) \
+        .select(
+            col("window.start").alias("window_start"),
+            col("window.end").alias("window_end"),
+            "symbol", "total_volume", "avg_price", "volatility",
+            (col("_pv_sum") / col("total_volume")).alias("vwap")
+        )
+
+    # ── Anomaly detection via foreachBatch ───────────────────────
+    def detect_anomalies(batch_df, batch_id):
+        if batch_df.isEmpty():
+            return
+
+        avg_vol = batch_df \
+            .groupBy("symbol") \
+            .agg(avg("total_volume").alias("avg_volume"))
+
+        anomalies = batch_df \
+            .join(avg_vol, on="symbol") \
+            .filter(col("total_volume") > col("avg_volume") * 3.0) \
+            .select("symbol", "window_start", "total_volume", "avg_volume")
+
+        if not anomalies.isEmpty():
+            print(f"\n🚨 ANOMALY DETECTED (batch {batch_id}):")
+            anomalies.show(truncate=False)
+
+    # ── Queries ──────────────────────────────────────────────────
+    q1 = df_1min.writeStream \
+        .format("console") \
+        .outputMode("update") \
+        .option("truncate", "false") \
+        .start()
+
+    q2 = df_5min.writeStream \
+        .format("console") \
+        .outputMode("update") \
+        .option("truncate", "false") \
+        .start()
+
+    q3 = df_1min.writeStream \
+        .foreachBatch(detect_anomalies) \
+        .outputMode("update") \
+        .start()
+
+    # Wait for all queries to terminate
+    reader.spark.streams.awaitAnyTermination()
