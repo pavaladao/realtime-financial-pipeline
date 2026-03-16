@@ -354,7 +354,7 @@ if __name__ == "__main__":
             (col("_pv_sum") / col("total_volume")).alias("vwap")
         )
 
-    # ── 5-minute sliding window (1-min slide) ───────────────────
+    #  ── 5-minute sliding window (1-min slide) ───────────────────
     df_5min = df_trades \
         .withWatermark("event_time", "30 seconds") \
         .groupBy(window("event_time", "5 minutes", "1 minute"), col("symbol")) \
@@ -389,23 +389,76 @@ if __name__ == "__main__":
             print(f"\n🚨 ANOMALY DETECTED (batch {batch_id}):")
             anomalies.show(truncate=False)
 
+    # ── Write to PostgreSQL ─────────────────────────────────────────
+
+    POSTGRES_URL = f"jdbc:postgresql://postgres:5432/{os.getenv('POSTGRES_DB')}"
+    POSTGRES_PROPS = {
+        "user": os.getenv("POSTGRES_USER"),
+        "password": os.getenv("POSTGRES_PASSWORD"),
+        "driver": "org.postgresql.Driver"
+    }
+
+    def write_to_postgres(table: str):
+        """Returns a function to write each batch to a specific PostgreSQL table."""
+        def _write(batch_df, batch_id):
+            if batch_df.isEmpty():
+                print(f"⏳ Batch {batch_id} — empty, waiting for window to close...")
+                return
+            batch_df.write \
+                .format("jdbc") \
+                .option("url", POSTGRES_URL) \
+                .option("dbtable", table) \
+                .option("user", POSTGRES_PROPS["user"]) \
+                .option("password", POSTGRES_PROPS["password"]) \
+                .option("driver", POSTGRES_PROPS["driver"]) \
+                .mode("append") \
+                .save()
+            print(f"✓ Batch {batch_id} written to PostgreSQL table '{table}'")
+        return _write
+
+    def write_anomalies(batch_df, batch_id):
+        if batch_df.isEmpty():
+            return
+
+        avg_vol = batch_df.groupBy("symbol") \
+            .agg(avg("total_volume").alias("avg_volume"))
+
+        anomalies = batch_df \
+            .join(avg_vol, on="symbol") \
+            .filter(col("total_volume") > col("avg_volume") * 3.0) \
+            .withColumn("ratio", col("total_volume") / col("avg_volume")) \
+            .select(
+                "symbol", "window_start", "window_end",
+                "total_volume", "avg_volume", "ratio",
+                "avg_price", "vwap"
+            )
+
+        if not anomalies.isEmpty():
+            anomalies.write \
+                .format("jdbc") \
+                .option("url", POSTGRES_URL) \
+                .option("dbtable", "anomalies") \
+                .option("user", POSTGRES_PROPS["user"]) \
+                .option("password", POSTGRES_PROPS["password"]) \
+                .option("driver", POSTGRES_PROPS["driver"]) \
+                .mode("append") \
+                .save()
+            print(f"🚨 {anomalies.count()} anomaly(ies) detected in batch {batch_id}")
+
     # ── Queries ──────────────────────────────────────────────────
     q1 = df_1min.writeStream \
-        .format("console") \
-        .outputMode("update") \
-        .option("truncate", "false") \
+        .foreachBatch(write_to_postgres("trades_aggregated_1min")) \
+        .outputMode("append") \
         .start()
 
     q2 = df_5min.writeStream \
-        .format("console") \
-        .outputMode("update") \
-        .option("truncate", "false") \
+        .foreachBatch(write_to_postgres("trades_aggregated_5min")) \
+        .outputMode("append") \
         .start()
 
     q3 = df_1min.writeStream \
-        .foreachBatch(detect_anomalies) \
-        .outputMode("update") \
+        .foreachBatch(write_anomalies) \
+        .outputMode("append") \
         .start()
 
-    # Wait for all queries to terminate
     reader.spark.streams.awaitAnyTermination()

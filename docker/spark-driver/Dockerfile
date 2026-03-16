@@ -19,7 +19,6 @@ RUN echo "=== Verifying Python dependencies ===" && \
     echo "" && \
     echo "=== Python version ===" && \
     python3 --version
-
 USER spark
 
 WORKDIR /app

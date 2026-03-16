@@ -28,6 +28,10 @@ RUN ln -sf /usr/bin/python3 /usr/bin/python
 ENV PYSPARK_PYTHON=/usr/bin/python3
 ENV PYSPARK_DRIVER_PYTHON=/usr/bin/python3
 
+# ===== PostgreSQL JDBC driver =====
+RUN curl -o /opt/spark/jars/postgresql-42.7.3.jar \
+    https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.3/postgresql-42.7.3.jar
+
 # ===== Ivy cache (Kafka / Avro deps) =====
 RUN mkdir -p /home/spark/.ivy2 && \
     chown -R spark:spark /home/spark/.ivy2
