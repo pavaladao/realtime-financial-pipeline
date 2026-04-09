@@ -12,13 +12,13 @@ avro_deserializer = AvroDeserializer(schema_registry_client)
 # Kafka configuration
 consumer_config = {
     'bootstrap.servers': 'localhost:9092',
-    'group.id': 'financial_data',
+    'group.id': 'debug_trades_consumer',
     'auto.offset.reset': 'earliest',
     'enable.auto.commit': False
 }
 
 consumer = Consumer(consumer_config)
-topics = ["financial_data"]
+topics = ["trades-data"]
 consumer.subscribe(topics)
 
 batch = []

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import io
 import fastavro
@@ -15,6 +16,33 @@ from pyspark.sql.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Repo root so `import src` works on executors when UDFs are unpickled (same path as Docker /app).
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+
+
+def _deserialize_avro_bytes(avro_bytes: bytes, avro_schema_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Deserialize Confluent wire-format Avro payload (5-byte header + payload)."""
+    try:
+        bio = io.BytesIO(avro_bytes[5:])
+        return fastavro.schemaless_reader(bio, avro_schema_dict)
+    except Exception as e:
+        logger.error(f"Error deserializing Avro: {e}")
+        raise
+
+
+def _avro_udf_from_schema(avro_schema_dict: Dict[str, Any], spark_schema: StructType):
+    """
+    Build a UDF that only closes over picklable data (schema dict), not SparkSession.
+
+    Binding ``udf(self._deserialize_avro, ...)`` pickles ``KafkaReader`` and fails on
+    workers with CONTEXT_ONLY_VALID_ON_DRIVER (SPARK-5063).
+    """
+
+    def _deserialize(avro_bytes: bytes) -> Dict[str, Any]:
+        return _deserialize_avro_bytes(avro_bytes, avro_schema_dict)
+
+    return udf(_deserialize, spark_schema)
 
 
 class KafkaReader:
@@ -81,8 +109,8 @@ class KafkaReader:
         # Convert to Spark schema
         self.spark_schema = self._avro_schema_to_spark_schema(self.avro_schema_str)
 
-        # Create UDF
-        self._avro_udf = udf(self._deserialize_avro, self.spark_schema)
+        # UDF must not close over self (contains SparkSession / SparkContext).
+        self._avro_udf = _avro_udf_from_schema(self.avro_schema_dict, self.spark_schema)
 
         # DataFrame will be created lazily
         self._df_stream = None
@@ -91,10 +119,18 @@ class KafkaReader:
     @staticmethod
     def _create_spark_session() -> SparkSession:
         """Creates a default SparkSession."""
-        return SparkSession.builder \
-            .appName("KafkaReaderApp") \
-            .master("spark://spark-master:7077") \
+        if _REPO_ROOT not in sys.path:
+            sys.path.insert(0, _REPO_ROOT)
+        py_path = os.environ.get("PYTHONPATH", "")
+        executor_pythonpath = (
+            f"{_REPO_ROOT}{os.pathsep}{py_path}" if py_path else _REPO_ROOT
+        )
+        return (
+            SparkSession.builder.appName("KafkaReaderApp")
+            .master("spark://spark-master:7077")
+            .config("spark.executorEnv.PYTHONPATH", executor_pythonpath)
             .getOrCreate()
+        )
 
     def _fetch_schema_from_registry(self) -> str:
         """
@@ -181,12 +217,7 @@ class KafkaReader:
 
         Removes the 5-byte Confluent header and deserializes the payload.
         """
-        try:
-            bio = io.BytesIO(avro_bytes[5:])  # Remove Confluent header
-            return fastavro.schemaless_reader(bio, self.avro_schema_dict)
-        except Exception as e:
-            logger.error(f"Error deserializing Avro: {e}")
-            raise
+        return _deserialize_avro_bytes(avro_bytes, self.avro_schema_dict)
 
     def get_stream(self) -> DataFrame:
         """

@@ -12,6 +12,8 @@ def test_finnhub_token_loaded_from_environment(monkeypatch):
 
 def test_finnhub_token_none_when_unset(monkeypatch):
     monkeypatch.delenv("FINNHUB_TOKEN", raising=False)
+    # Reload re-binds `load_dotenv`; patch at source so `.env` cannot repopulate os.environ.
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *_a, **_k: None)
     import src.config.env as env
 
     importlib.reload(env)

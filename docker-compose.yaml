@@ -81,6 +81,11 @@ services:
       - "bin/spark-class"
       - "org.apache.spark.deploy.worker.Worker"
       - "spark://spark-master:7077"
+    volumes:
+      # Same layout as spark-driver so PySpark UDFs can unpickle `src.*` on executors.
+      - ./src:/app/src
+    environment:
+      PYTHONPATH: /app
     networks:
       - financial-pipeline
 

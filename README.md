@@ -114,7 +114,7 @@ cd realtime-financial-pipeline
 ```bash
 cp .env.example .env
 # Edit .env and add your API keys:
-# - FINNHUB_API_KEY=your_key_here
+# - FINNHUB_TOKEN=your_key_here
 # - AWS_ACCESS_KEY_ID=your_key
 # - AWS_SECRET_ACCESS_KEY=your_secret
 ```
@@ -137,15 +137,15 @@ You should see:
 
 ### Running the Pipeline
 
-1. **Start the producer**
+1. **Start the producer** (from repository root; `PYTHONPATH` must include the repo root so `import src` resolves)
 ```bash
-python producers/stock_producer.py
+PYTHONPATH=. python -m src.producers.producer
 ```
+On Windows PowerShell: `$env:PYTHONPATH = (Get-Location).Path; python -m src.producers.producer`
 
-2. **Start the Spark streaming job**
-```bash
-spark-submit processors/streaming_processor.py
-```
+2. **Start the Spark streaming job**  
+Use [`scripts/init-pipeline.ps1`](scripts/init-pipeline.ps1) (brings up Docker, registers the schema, runs `spark-submit` in the `spark-driver` container against `src/processors/streaming_processor.py`).  
+Or run the equivalent `spark-submit` from the `spark-driver` container with `--packages` for Kafka and JDBC as in that script.
 
 3. **Run dbt transformations**
 ```bash
@@ -205,14 +205,18 @@ realtime-financial-pipeline/
 │   ├── spark/
 │   └── airflow/
 │
-├── producers/                   # Data ingestion
-│   ├── stock_producer.py
-│   └── config.py
+├── src/                         # Application code (Python package)
+│   ├── config/
+│   ├── consumers/
+│   ├── producers/
+│   ├── processors/              # Stream processing (Spark, Kafka Avro reader)
+│   │   ├── kafka_reader.py
+│   │   ├── streaming_processor.py
+│   │   ├── trade_transforms.py
+│   │   └── postgres_batch.py
+│   └── schemas/
 │
-├── processors/                  # Stream processing
-│   ├── streaming_processor.py
-│   ├── transformations.py
-│   └── utils.py
+├── scripts/                     # e.g. init-pipeline.ps1
 │
 ├── dbt_project/                # Data transformations
 │   ├── models/
@@ -260,18 +264,9 @@ realtime-financial-pipeline/
 Run the full test suite:
 
 ```bash
-# Unit tests
-pytest tests/unit/ -v
-
-# Integration tests
-pytest tests/integration/ -v
-
-# Coverage report
-pytest --cov=. --cov-report=html
-
-# Load testing
-locust -f tests/load/locustfile.py
+pytest
 ```
+(The repository currently uses a flat `tests/` layout; extend with `tests/unit/` etc. as you add suites.)
 
 ## 📈 Performance Benchmarks
 
@@ -290,8 +285,8 @@ Current performance metrics (as of latest test):
 ### Environment Variables
 
 ```bash
-# API Keys
-FINNHUB_API_KEY=your_api_key
+# API Keys (producer reads FINNHUB_TOKEN via src.config.env)
+FINNHUB_TOKEN=your_api_key
 
 # AWS
 AWS_ACCESS_KEY_ID=your_access_key

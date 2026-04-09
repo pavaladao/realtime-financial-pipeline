@@ -26,6 +26,8 @@ WORKDIR /app
 # Variáveis de ambiente para Python
 ENV PYSPARK_PYTHON=python3
 ENV PYSPARK_DRIVER_PYTHON=python3
+# Match compose mount ./src:/app/src so `import src` works for driver and UDF pickling.
+ENV PYTHONPATH=/app
 
 # CMD ["spark-submit", \
 #      "--master", "spark://spark-master:7077", \
