@@ -312,6 +312,11 @@ from pyspark.sql.functions import (
 )
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(levelname)s %(name)s %(message)s",
+        force=True,
+    )
 
     reader = KafkaReader(
         kafka_bootstrap="kafka:29092",
@@ -386,15 +391,25 @@ if __name__ == "__main__":
             .select("symbol", "window_start", "total_volume", "avg_volume")
 
         if not anomalies.isEmpty():
-            print(f"\n🚨 ANOMALY DETECTED (batch {batch_id}):")
+            print(f"\n🚨 ANOMALY DETECTED (batch {batch_id}):", flush=True)
             anomalies.show(truncate=False)
 
     # ── Write to PostgreSQL ─────────────────────────────────────────
 
-    POSTGRES_URL = f"jdbc:postgresql://postgres:5432/{os.getenv('POSTGRES_DB')}"
+    _pg_db = os.getenv("POSTGRES_DB")
+    _pg_user = os.getenv("POSTGRES_USER")
+    _pg_pw = os.getenv("POSTGRES_PASSWORD")
+    if not _pg_db or not _pg_user or not _pg_pw:
+        raise RuntimeError(
+            "Set POSTGRES_DB, POSTGRES_USER, and POSTGRES_PASSWORD (non-empty). "
+            "In Docker, they must match the postgres service; if you changed the password "
+            "after the DB was first created, recreate the volume or ALTER USER."
+        )
+
+    POSTGRES_URL = f"jdbc:postgresql://postgres:5432/{_pg_db}"
     POSTGRES_PROPS = {
-        "user": os.getenv("POSTGRES_USER"),
-        "password": os.getenv("POSTGRES_PASSWORD"),
+        "user": _pg_user,
+        "password": _pg_pw,
         "driver": "org.postgresql.Driver"
     }
 
@@ -402,7 +417,7 @@ if __name__ == "__main__":
         """Returns a function to write each batch to a specific PostgreSQL table."""
         def _write(batch_df, batch_id):
             if batch_df.isEmpty():
-                print(f"⏳ Batch {batch_id} — empty, waiting for window to close...")
+                print(f"⏳ Batch {batch_id} — empty, waiting for window to close...", flush=True)
                 return
             batch_df.write \
                 .format("jdbc") \
@@ -413,7 +428,7 @@ if __name__ == "__main__":
                 .option("driver", POSTGRES_PROPS["driver"]) \
                 .mode("append") \
                 .save()
-            print(f"✓ Batch {batch_id} written to PostgreSQL table '{table}'")
+            print(f"✓ Batch {batch_id} written to PostgreSQL table '{table}'", flush=True)
         return _write
 
     def write_anomalies(batch_df, batch_id):
@@ -443,7 +458,7 @@ if __name__ == "__main__":
                 .option("driver", POSTGRES_PROPS["driver"]) \
                 .mode("append") \
                 .save()
-            print(f"🚨 {anomalies.count()} anomaly(ies) detected in batch {batch_id}")
+            print(f"🚨 {anomalies.count()} anomaly(ies) detected in batch {batch_id}", flush=True)
 
     # ── Queries ──────────────────────────────────────────────────
     q1 = df_1min.writeStream \
