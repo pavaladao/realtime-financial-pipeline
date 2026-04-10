@@ -10,5 +10,11 @@ __pycache__/
 # VS Code
 .vscode/
 
+# Cursor IDE
+.cursor/
+
 # Logs
 *.log
+
+# Spark streaming checkpoints (local bind mount)
+checkpoints/

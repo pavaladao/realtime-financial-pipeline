@@ -13,6 +13,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         "src/schemas/finnhub_trades_schema.avsc",
         "src/processors/kafka_reader.py",
         "src/processors/postgres_batch.py",
+        "src/processors/lake_batch.py",
         "src/processors/streaming_processor.py",
         "src/processors/trade_transforms.py",
         "src/producers/producer.py",

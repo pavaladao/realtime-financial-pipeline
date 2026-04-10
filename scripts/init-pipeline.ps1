@@ -29,7 +29,8 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $RepoRoot
 
-$SparkPackages = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.3"
+# hadoop-aws / aws-sdk versions align with Hadoop 3.3.4 (Spark 3.5.3) — mismatches cause S3A NoClassDefFoundError (e.g. PrefetchingStatistics).
+$SparkPackages = "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.3,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262"
 
 function Wait-TcpPort {
     param(
@@ -97,6 +98,7 @@ Wait-TcpPort -Port 9092
 Wait-TcpPort -Port 8081
 Wait-SchemaRegistryHttp
 Wait-TcpPort -Port 5433
+Wait-TcpPort -Port 9000
 
 # --- 3. src/producers/update_schema.py ---
 $python = Resolve-Python

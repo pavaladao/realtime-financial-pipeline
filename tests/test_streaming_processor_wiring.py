@@ -12,6 +12,9 @@ def test_streaming_processor_module_imports():
     assert m.aggregate_5min.__name__ == "aggregate_5min"
     assert m.make_table_foreach_batch.__name__ == "make_table_foreach_batch"
     assert m.make_anomaly_foreach_batch.__name__ == "make_anomaly_foreach_batch"
+    assert m.is_lake_enabled.__name__ == "is_lake_enabled"
+    assert m.apply_s3a_hadoop_conf.__name__ == "apply_s3a_hadoop_conf"
+    assert m.make_raw_trades_parquet_foreach_batch.__name__ == "make_raw_trades_parquet_foreach_batch"
 
 
 def test_streaming_processor_kafka_and_topic_defaults():
@@ -25,3 +28,6 @@ def test_streaming_processor_kafka_and_topic_defaults():
     assert 'make_table_foreach_batch("trades_aggregated_1min")' in source
     assert 'make_table_foreach_batch("trades_aggregated_5min")' in source
     assert "make_anomaly_foreach_batch()" in source
+    assert "is_lake_enabled()" in source
+    assert 'checkpointLocation", "/app/checkpoints/lake_raw"' in source
+    assert "make_raw_trades_parquet_foreach_batch()" in source

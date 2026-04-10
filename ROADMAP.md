@@ -10,6 +10,33 @@
 
 ---
 
+## Estado atual do repositório (auditoria)
+
+*Última revisão alinhada ao código em `src/`, `docker-compose.yaml`, `scripts/init-pipeline.ps1` e testes em `tests/`.*
+
+### Implementado e funcional
+
+- **Ingestão:** `src/producers/producer.py` — Finnhub WebSocket → Kafka (`confluent-kafka` + Avro + Schema Registry).
+- **Topic Kafka:** `trades-data` (não `financial-trades`). Registro de schema: `src/producers/update_schema.py`, `src/schemas/finnhub_trades_schema.avsc`.
+- **Infra Docker:** Kafka em modo **KRaft** (sem Zookeeper), Schema Registry, **MinIO** (lake S3-compatible), **PostgreSQL**, **Spark** (master, worker, driver custom). **Não** há Zookeeper, Kafka UI, Airflow, Grafana, Streamlit ou serviços do README na compose atual.
+- **Portas úteis:** Kafka host `9092`, Schema Registry `8081`, Postgres host `5433`, MinIO API `9000` / console `9001`, **Spark Master UI `8080`** (não é Kafka UI).
+- **Processamento:** `src/processors/streaming_processor.py` — Structured Streaming, `KafkaReader` + Avro (`kafka_reader.py`), agregações 1 min / 5 min + watermark (`trade_transforms.py`), escrita JDBC em Postgres (`postgres_batch.py`), anomalias volume > 3× média, lake Parquet opcional (`lake_batch.py`) com partição `year/month/day/hour`, Snappy, checkpoint em `/app/checkpoints/...` quando `LAKE_ENABLED`.
+- **SQL:** `sql/init.sql` — tabelas alinhadas aos aggregates (incl. `anomalies`).
+- **Dev:** `scripts/init-pipeline.ps1` — sobe stack, schema, topic, `spark-submit` no `spark-driver`.
+- **Testes:** `pytest` em `tests/` (transforms, lake/postgres batch, kafka reader, wiring, layout, env, paths). **Sem** `tests/test_consumer.py`, **sem** CI GitHub Actions no repo, **sem** cobertura 80% formal ainda.
+
+### README vs realidade
+
+O **README** ainda descreve dbt, Airflow, Great Expectations, Grafana, GitHub Actions, etc.; isso é **roadmap / aspiracional**. Trate o pipeline **Python + Compose** acima como fonte de verdade até essas camadas existirem no repositório.
+
+### Próximos passos sugeridos (ordem prática)
+
+1. **Curto prazo:** DLQ + logging estruturado + troubleshooting no README; alinhar README “Quick Start” às portas reais; opcional **AWS S3** real espelhando o mesmo layout do MinIO.
+2. **Semana 3+ do roadmap:** dbt em Postgres → depois Airflow → depois dashboard (Streamlit) e observabilidade (Prometheus/Grafana) se quiser fechar o plano original.
+3. **Qualidade / entrega:** CI (lint + pytest), testes de integração com containers, `LICENSE` e documentação de arquitetura real (`ARCHITECTURE.md` ou diagrama).
+
+---
+
 # 🗓️ SEMANA 1: FUNDAMENTOS + SETUP
 
 ## DIA 1 (Segunda) - 2-3h: Planejamento & Setup Inicial
@@ -30,15 +57,17 @@
 - [x]  Criar README.md básico com título e objetivo
 - [x]  Criar estrutura de pastas: docker/, producers/, processors/, dags/, dashboard/, tests/, docs/
 
-```jsx
+```text
 realtime-financial-pipeline/
 ├── docker/
-├── producers/
-├── processors/
-├── dags/
-├── dashboard/
+├── src/
+│   ├── producers/
+│   ├── processors/
+│   └── consumers/
+├── sql/
+├── scripts/
 ├── tests/
-└── docs/
+└── (futuro: dags/, dashboard/, docs/)
 ```
 
 ### ENTREGÁVEL
@@ -52,7 +81,7 @@ realtime-financial-pipeline/
 ### O QUE ESTUDAR (3h)
 
 - [x]  Docker Compose (1.5h): multi-container apps
-- [x]  Zookeeper + Kafka setup (1.5h)
+- [x]  Kafka em Docker (1.5h): broker, listeners — *hoje: KRaft, sem Zookeeper*
 
 **RECURSOS:**
 - Docker Compose: https://docs.docker.com/compose/
@@ -60,10 +89,10 @@ realtime-financial-pipeline/
 
 ### TASKS
 
-- [x]  Criar docker-compose.yml com: Zookeeper, Kafka Broker, Schema Registry, Kafka UI
-- [x]  Subir ambiente: `docker-compose up -d`
-- [x]  Verificar que Kafka está rodando (acessar UI: localhost:8080)
-- [x]  Criar primeiro topic: `financial-trades`
+- [x]  Criar `docker-compose.yaml` com: Kafka (KRaft), Schema Registry, MinIO, Postgres, Spark — *sem Zookeeper; Kafka UI não está no compose*
+- [x]  Subir ambiente: `docker compose up -d`
+- [x]  Verificar serviços (Kafka `9092`, Schema Registry `8081`; Spark Master UI `http://localhost:8080` — não é Kafka UI)
+- [x]  Topic do pipeline: `trades-data` *(criado via `init-pipeline.ps1` / `kafka-topics`)*
 
 ### ENTREGÁVEL
 
@@ -86,7 +115,7 @@ realtime-financial-pipeline/
 ### TASKS
 
 - [x]  Criar conta Finnhub (grátis)
-- [x]  Criar producers/stock_producer.py
+- [x]  Implementar `src/producers/producer.py` *(não `stock_producer.py`)*
 - [x]  Implementar conexão WebSocket com Finnhub
 - [x]  Produzir mensagens para Kafka topic
 - [x]  Adicionar logging básico
@@ -107,8 +136,8 @@ realtime-financial-pipeline/
 
 ### TASKS
 
-- [x]  Criar tests/test_consumer.py
-- [x]  Consumir mensagens do topic `financial-trades`
+- [ ]  Criar `tests/test_consumer.py` *(opcional — consumer de referência: `src/consumers/consumer.py`)*
+- [x]  Consumir mensagens do topic `trades-data` *(ou validar via Spark/processor)*
 - [x]  Printar dados no console
 - [x]  Validar estrutura JSON
 - [x]  Documentar schema esperado no README
@@ -128,7 +157,7 @@ realtime-financial-pipeline/
 
 ### TASKS
 
-- [x]  Criar schema Avro para trades: schemas/trade.avsc
+- [x]  Schema Avro: `src/schemas/finnhub_trades_schema.avsc` (+ JSON espelho)
 - [x]  Atualizar producer para usar Schema Registry
 - [x]  Atualizar consumer para validar schema
 - [x]  Testar backward compatibility
@@ -145,7 +174,7 @@ realtime-financial-pipeline/
 
 - [x]  Limpar código da semana
 - [x]  Adicionar docstrings
-- [x]  Atualizar README com: Como rodar o projeto, Arquitetura (diagrama simples), Screenshots do Kafka UI
+- [x]  README com visão geral *(alinhar screenshots à stack real: MinIO `9001`, Spark UI `8080`, etc.)*
 - [x]  Commit e push tudo no GitHub
 - [x]  Revisar conceitos aprendidos
 
@@ -173,7 +202,7 @@ realtime-financial-pipeline/
 - [x]  Adicionar Spark ao docker-compose.yml: Spark Master, Spark Worker
 - [x]  Criar processors/streaming_processor.py
 - [x]  Conectar Spark com Kafka
-- [x]  Ler stream do topic `financial-trades`
+- [x]  Ler stream do topic `trades-data`
 - [x]  Printar no console (modo debug)
 
 ### ENTREGÁVEL
@@ -214,7 +243,7 @@ realtime-financial-pipeline/
 
 - [x]  Implementar VWAP (Volume Weighted Average Price)
 - [x]  Calcular volatilidade (rolling standard deviation)
-- [x]  Implementar sliding windows (5min, 15min)
+- [x]  Janela 5 min com slide 1 min (`aggregate_5min`); *15 min não implementado*
 - [x]  Configurar watermarking para late data
 - [x]  Adicionar detecção de anomalias simples (volume > 3x média)
 
@@ -256,16 +285,16 @@ realtime-financial-pipeline/
 
 ### TASKS
 
-- [ ]  Criar conta AWS free tier (se não tiver)
-- [ ]  Criar bucket S3: `financial-pipeline-datalake`
-- [ ]  Configurar Spark para escrever em S3
-- [ ]  Implementar particionamento: year/month/day/hour/symbol
-- [ ]  Usar formato Parquet com compressão Snappy
-- [ ]  Implementar checkpointing para fault tolerance
+- [ ]  Criar conta AWS free tier *(opcional se usar só MinIO local)*
+- [ ]  **Produção AWS:** criar bucket S3 `financial-pipeline-datalake` e credenciais; apontar `S3A_ENDPOINT` vazio / endpoint regional
+- [x]  **Local:** MinIO no `docker-compose`, bucket via `minio-create-bucket`, credenciais em `.env`
+- [x]  Spark S3A configurado (`lake_batch.py` + `apply_s3a_hadoop_conf`, variáveis `S3A_*` / `AWS_*`)
+- [x]  Particionamento **year/month/day/hour** *(símbolo não particionado no path; coluna `symbol` nos dados)*
+- [x]  Parquet + Snappy; checkpoint do stream lake em `/app/checkpoints/lake_raw` *(streaming_processor)*
 
 ### ENTREGÁVEL
 
-✅ Data lake funcionando em S3
+✅ Data lake **bronze** em MinIO (dev) com Parquet; AWS S3 como passo opcional de produção
 
 ---
 
@@ -280,7 +309,7 @@ realtime-financial-pipeline/
 ### TASKS
 
 - [ ]  Implementar error handling robusto
-- [ ]  Criar dead letter topic: `financial-trades-dlq`
+- [ ]  Criar dead letter topic (ex.: `trades-data-dlq`) e roteamento de falhas
 - [ ]  Adicionar logging estruturado (JSON logs)
 - [ ]  Implementar retry logic com exponential backoff
 - [ ]  Adicionar métricas de monitoring: Records processed/sec, Processing latency, Error rate
@@ -439,7 +468,7 @@ realtime-financial-pipeline/
 
 - [ ]  Adicionar Airflow ao docker-compose.yml: Postgres (metadata DB), Redis (celery backend), Webserver, Scheduler, Worker
 - [ ]  Subir Airflow: `docker-compose up airflow-init`
-- [ ]  Acessar UI: localhost:8080
+- [ ]  Acessar UI Airflow em porta **diferente de 8080** *(8080 = Spark Master neste projeto)* ou desligar Spark ao desenvolver Airflow local
 - [ ]  Criar primeiro DAG: hello_world.py
 - [ ]  Verificar que aparece na UI
 
@@ -691,23 +720,23 @@ realtime-financial-pipeline/
 
 ### O QUE ESTUDAR (3h)
 
-- [ ]  pytest (1.5h): fixtures, parametrize
-- [ ]  Mocking (1.5h): unittest.mock
+- [x]  pytest (1.5h): fixtures, parametrize — *`tests/conftest.py`, `spark_session`*
+- [ ]  Mocking (1.5h): unittest.mock — *expandir para producer/integrações*
 
 **RECURSOS:**
 - pytest docs: https://docs.pytest.org/
 
 ### TASKS
 
-- [ ]  Criar tests/unit/
-- [ ]  Escrever tests para: Producer, Processor, Utilities
+- [x]  Suite em `tests/` *(layout, env, paths, transforms, lake/postgres batch, kafka reader, wiring)*
+- [ ]  Ampliar cobertura: producer, consumer, integração Kafka
 - [ ]  Alcançar >80% code coverage
-- [ ]  Configurar pytest.ini
+- [ ]  Configurar `pytest.ini` / `pyproject.toml` opcional
 - [ ]  Rodar: `pytest --cov`
 
 ### ENTREGÁVEL
 
-✅ Suite de unit tests passando
+✅ Testes principais passando; **meta de cobertura e CI ainda em aberto**
 
 ---
 
@@ -720,15 +749,15 @@ realtime-financial-pipeline/
 
 ### TASKS
 
-- [ ]  Criar tests/integration/
-- [ ]  Escrever tests: test_kafka_to_spark, test_spark_to_postgres, test_spark_to_s3, test_dbt_run
-- [ ]  Usar testcontainers para isolar
-- [ ]  Configurar CI para rodar tests
-- [ ]  Documentar como rodar tests
+- [ ]  Criar `tests/integration/` *(ou job Compose + health checks)*
+- [ ]  Cenários: Kafka → Spark, Spark → Postgres, Spark → MinIO/S3; *dbt quando existir*
+- [ ]  Testcontainers ou script E2E com `docker compose`
+- [ ]  Workflow CI (GitHub Actions / outro) rodando `pytest`
+- [ ]  Documentar como rodar testes de integração
 
 ### ENTREGÁVEL
 
-✅ Integration tests funcionando
+✅ Integration tests funcionando *(não iniciado no repo)*
 
 ---
 
@@ -828,7 +857,7 @@ realtime-financial-pipeline/
 
 ## Código
 
-- [ ]  Todos os tests passando (unit + integration)
+- [ ]  Todos os tests passando (unit + integration) — *unitários principais ok; integração pendente*
 - [ ]  Code coverage > 80%
 - [ ]  Sem warnings no linter
 - [ ]  Código comentado adequadamente
@@ -838,9 +867,9 @@ realtime-financial-pipeline/
 
 ## Documentação
 
-- [ ]  README profissional e completo
+- [ ]  README alinhado à stack real *(portas, serviços, sem Airflow/Grafana até existirem)*
 - [ ]  Diagramas de arquitetura claros
-- [ ]  Quick start funciona em 5min
+- [ ]  Quick start funciona em 5min *(validar no Windows + `init-pipeline.ps1`)*
 - [ ]  Troubleshooting guide útil
 - [ ]  Todos os comandos documentados
 - [ ]  Screenshots atualizados
@@ -848,17 +877,17 @@ realtime-financial-pipeline/
 
 ## Funcionalidade
 
-- [ ]  Pipeline processa dados em real-time
-- [ ]  Latência < 500ms end-to-end
-- [ ]  Data quality checks funcionando
+- [x]  Pipeline processa dados em streaming *(Structured Streaming + Postgres + lake opcional)*
+- [ ]  Latência < 500ms end-to-end *(medir e documentar)*
+- [ ]  Data quality checks funcionando *(dbt/GE não no repo)*
 - [ ]  Alerting funcionando
 - [ ]  Dashboard atualizando automaticamente
-- [ ]  Pode processar 10k events/sec
-- [ ]  Fault-tolerant (recupera de falhas)
+- [ ]  Pode processar 10k events/sec *(load test)*
+- [ ]  Fault-tolerant (recupera de falhas) — *checkpoints lake; DLQ/retry em aberto*
 
 ## DevOps
 
-- [ ]  Docker compose funciona first try
+- [x]  Docker compose sobe stack principal *(rebuild após mudanças em imagens Spark)*
 - [ ]  CI/CD pipeline verde
 - [ ]  Deployado em cloud
 - [ ]  Monitoring funcionando
@@ -880,9 +909,9 @@ realtime-financial-pipeline/
 
 ## 1. GitHub Repository
 
-- [ ]  Código production-ready
+- [ ]  Código production-ready — *core streaming ok; hardening em aberto*
 - [ ]  100% documentado
-- [ ]  Tests passando
+- [x]  Tests principais passando (`pytest`)
 - [ ]  CI/CD configurado
 
 ## 2. Live Demo
@@ -899,12 +928,12 @@ realtime-financial-pipeline/
 
 ## 4. Skills Comprovadas
 
-- [ ]  Kafka + Spark Streaming
+- [x]  Kafka + Spark Streaming *(núcleo do projeto)*
 - [ ]  dbt + Data Modeling
 - [ ]  Airflow + Orchestration
-- [ ]  AWS + Cloud Infrastructure
-- [ ]  Docker + DevOps
-- [ ]  Testing + CI/CD
+- [ ]  AWS + Cloud Infrastructure — *MinIO local feito; S3 real opcional*
+- [x]  Docker + DevOps *(parcial — sem CI)*
+- [ ]  Testing + CI/CD — *pytest presente; CI e integração pendentes*
 - [ ]  Data Quality + Monitoring
 
 ---
